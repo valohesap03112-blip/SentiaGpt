@@ -4,19 +4,24 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json({ limit: '10mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
 
-// Proxy endpoint: client sends { provider, key, model, messages, system }
+// Statik dosyaları sun
+const publicPath = path.join(__dirname, 'public');
+app.use(express.static(publicPath));
+
+// Proxy endpoint
 app.post('/api/chat', async (req, res) => {
   const { provider, key, model, messages, system } = req.body || {};
+
   if (!provider || !key || !messages) {
     return res.status(400).json({ error: 'provider, key ve messages gerekli' });
   }
 
   try {
     let result;
+
     if (provider === 'anthropic') {
-      result = await fetch('https://api.anthropic.com/v1/messages', {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -29,13 +34,15 @@ app.post('/api/chat', async (req, res) => {
           system: system || '',
           messages,
         }),
-      }).then(r => r.json());
+      });
+      result = await response.json();
+      if (!response.ok) throw new Error(result.error?.message || 'Anthropic hatası');
       const text = (result.content || []).map(b => b.text || '').join('');
-      return res.json({ text, raw: result });
+      return res.json({ text });
     }
 
     if (provider === 'openai') {
-      result = await fetch('https://api.openai.com/v1/chat/completions', {
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -45,9 +52,11 @@ app.post('/api/chat', async (req, res) => {
           model: model || 'gpt-4o',
           messages: system ? [{ role: 'system', content: system }, ...messages] : messages,
         }),
-      }).then(r => r.json());
+      });
+      result = await response.json();
+      if (!response.ok) throw new Error(result.error?.message || 'OpenAI hatası');
       const text = result.choices?.[0]?.message?.content || '';
-      return res.json({ text, raw: result });
+      return res.json({ text });
     }
 
     if (provider === 'gemini') {
@@ -56,29 +65,32 @@ app.post('/api/chat', async (req, res) => {
         role: m.role === 'assistant' ? 'model' : 'user',
         parts: [{ text: m.content }],
       }));
-      result = await fetch(url, {
+      const response = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           systemInstruction: system ? { parts: [{ text: system }] } : undefined,
           contents,
         }),
-      }).then(r => r.json());
+      });
+      result = await response.json();
+      if (!response.ok) throw new Error(result.error?.message || 'Gemini hatası');
       const text = (result.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('');
-      return res.json({ text, raw: result });
+      return res.json({ text });
     }
 
-    return res.status(400).json({ error: 'Bilinmeyen sağlayıcı' });
+    return res.status(400).json({ error: 'Bilinmeyen sağlayıcı: ' + provider });
   } catch (e) {
-    console.error(e);
+    console.error('API hatası:', e.message);
     res.status(500).json({ error: e.message || 'Sunucu hatası' });
   }
 });
 
+// SPA fallback
 app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  res.sendFile(path.join(publicPath, 'index.html'));
 });
 
-app.listen(PORT, () => {
-  console.log(`Sentia sunucusu çalışıyor → http://localhost:${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Sentia sunucusu çalışıyor → port ${PORT}`);
 });
